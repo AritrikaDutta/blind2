@@ -13,6 +13,8 @@ st.markdown("Upload a video or use your live camera feed to analyze crossing saf
 # --- Mode Selection ---
 mode = st.radio("Choose input source:", ["Upload Video", "Live Camera"])
 
+phone_camera_url = "http://10.10.32.194:4747/video"
+
 if mode == "Upload Video":
     uploaded_file = st.file_uploader("Upload a video", type=["mp4", "avi", "mov", "mkv"])
 
@@ -57,7 +59,7 @@ elif mode == "Live Camera":
     run = st.checkbox("Start Camera")
 
     if run:
-        cap = cv2.VideoCapture(0)  # 0 = default webcam
+        cap = cv2.VideoCapture(phone_camera_url)  # 0 = default webcam
 
         if not cap.isOpened():
             st.error("❌ Could not access your camera.")
