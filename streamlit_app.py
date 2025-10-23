@@ -6,6 +6,7 @@ import time
 from video_stream_tracking_appmodule import process_frame, fps
 from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
 import av
+from voice_feedback_2 import VoiceAlertManager
 
 # --- Streamlit Page Config ---
 st.set_page_config(page_title="Pedestrian Safety Assistant", layout="wide")
@@ -39,6 +40,7 @@ if mode == "Upload Video":
             out = cv2.VideoWriter(out_path, fourcc, fps, (frame_width, frame_height))
 
             frame_counter = 0
+            voice_alert = VoiceAlertManager()
             with st.spinner("Processing video frames..."):
                 while cap.isOpened():
                     ret, frame = cap.read()
@@ -46,12 +48,14 @@ if mode == "Upload Video":
                         break
                     frame_counter += 1
                     processed_frame = process_frame(frame)
-                    out.write(processed_frame)
+                    # After processing, get the audio path for the current label
+                    audio_path = voice_alert.get_audio_path("Move")  # or "Stop", depending on your logic
                 cap.release()
                 out.release()
-
             st.success(f"✅ Video processing completed. {frame_counter} frames processed.")
             st.video(out_path)
+            # Play the last generated audio (example)
+            st.audio(audio_path)
             os.unlink(temp_video.name)
             os.unlink(out_path)
     else:
@@ -86,11 +90,17 @@ elif mode == "Live Camera":
     
     else:  # Web (Browser)
         st.info("📹 Click 'START' to begin browser camera feed (works on web deployments)")
+        if "last_label" not in st.session_state:
+            st.session_state.last_label = None
         def video_frame_callback(frame):
             img = frame.to_ndarray(format="bgr24")
             processed_frame = process_frame(img)
+            label = "Move"  
+            if st.session_state.last_label != label:
+                audio_path = voice_alert.get_audio_path(label)
+                st.session_state.last_label = label
+                st.audio(audio_path)
             return av.VideoFrame.from_ndarray(processed_frame, format="bgr24")
-        
         webrtc_ctx = webrtc_streamer(
             key="pedestrian-safety-web",
             mode=WebRtcMode.SENDRECV,
