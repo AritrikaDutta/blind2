@@ -19,7 +19,6 @@ if mode == "Upload Video":
     uploaded_file = st.file_uploader("Upload a video", type=["mp4", "avi", "mov", "mkv"])
 
     if uploaded_file:
-        # Save uploaded video to a temp file
         temp_video = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
         temp_video.write(uploaded_file.read())
         temp_video.close()
@@ -33,24 +32,28 @@ if mode == "Upload Video":
             if video_fps > 0:
                 fps = int(video_fps)
 
-            stframe = st.empty()
+            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+            frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            out_path = tempfile.NamedTemporaryFile(delete=False, suffix="_processed.mp4").name
+            out = cv2.VideoWriter(out_path, fourcc, fps, (frame_width, frame_height))
+
             frame_counter = 0
-            while cap.isOpened():
-                ret, frame = cap.read()
-                if not ret:
-                    break
+            with st.spinner("Processing video frames..."):
+                while cap.isOpened():
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
+                    frame_counter += 1
+                    processed_frame = process_frame(frame)
+                    out.write(processed_frame)
+                cap.release()
+                out.release()
 
-                frame_counter += 1
-                processed_frame = process_frame(frame)
-
-                rgb_frame = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
-                stframe.image(rgb_frame, channels="RGB", use_container_width=True)
-
-                time.sleep(1 / fps)
-
-            cap.release()
+            st.success(f"✅ Video processing completed. {frame_counter} frames processed.")
+            st.video(out_path)
             os.unlink(temp_video.name)
-            st.success("✅ Video processing completed.")
+            os.unlink(out_path)
     else:
         st.info("👆 Upload a video file to start analysis.")
 
