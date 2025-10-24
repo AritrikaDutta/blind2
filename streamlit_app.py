@@ -3,14 +3,62 @@ import cv2
 import tempfile
 import os
 import time
+import base64
+from pathlib import Path
 from video_stream_tracking_appmodule import process_frame, fps
 from streamlit_webrtc import webrtc_streamer, WebRtcMode, RTCConfiguration
 import av
+from voice_feedback_2 import get_last_alert_event
 
 # --- Streamlit Page Config ---
 st.set_page_config(page_title="Pedestrian Safety Assistant", layout="wide")
 st.title("🚦 Pedestrian Safety Assistant")
 st.markdown("Upload a video or use your live camera feed to analyze crossing safety.")
+
+# --- Audio alert placeholder ---
+audio_placeholder = st.empty()
+status_placeholder = st.empty()
+BASE_DIR = Path(__file__).resolve().parent
+AUDIO_DIR = BASE_DIR / "voice_cache"
+
+
+def play_alert_if_new():
+    """Play move/stop alert in browser when a new event is emitted by backend."""
+    evt = get_last_alert_event()
+    last_seq = st.session_state.get("_last_alert_seq", 0)
+    if not evt or not evt.get("label"):
+        return
+    if int(evt.get("seq", 0)) <= int(last_seq):
+        return
+
+    # Update last played sequence
+    st.session_state["_last_alert_seq"] = int(evt["seq"]) if "seq" in evt else last_seq
+
+    label = str(evt.get("label", "")).lower()
+    fname = "move.mp3" if label == "move" else "stop.mp3"
+    fpath = str((AUDIO_DIR / fname).resolve())
+    if not os.path.exists(fpath):
+        st.warning(f"Missing audio file: {fpath}")
+        return
+
+    try:
+        with open(fpath, "rb") as f:
+            data = f.read()
+        b64 = base64.b64encode(data).decode("ascii")
+        # Autoplay inline; append seq as a cache-busting fragment so repeated plays
+        # of the same file still re-trigger audio on all browsers.
+        seq = int(evt.get("seq", 0))
+        src = f"data:audio/mpeg;base64,{b64}#v={seq}"
+        html = (
+            f'<audio id="alert-audio" autoplay playsinline preload="auto">'
+            f'<source src="{src}" type="audio/mpeg"></audio>'
+        )
+        # Clear then re-insert to ensure DOM updates across reruns.
+        audio_placeholder.empty()
+        audio_placeholder.markdown(html, unsafe_allow_html=True)
+        status_placeholder.caption(f"Last alert: {label.title()} (seq {seq})")
+    except Exception as e:
+        st.warning(f"Failed to play alert: {e}")
 
 # --- Mode Selection ---
 mode = st.radio("Choose input source:", ["Upload Video", "Live Camera"])
@@ -46,6 +94,9 @@ if mode == "Upload Video":
                 rgb_frame = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
                 stframe.image(rgb_frame, channels="RGB", use_container_width=True)
 
+                # Play alert in-browser if a new one was emitted
+                play_alert_if_new()
+
                 time.sleep(1 / fps)
 
             cap.release()
@@ -76,6 +127,9 @@ elif mode == "Live Camera":
                     rgb_frame = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2RGB)
                     stframe.image(rgb_frame, channels="RGB", use_container_width=True)
 
+                    # Play alert in-browser if a new one was emitted
+                    play_alert_if_new()
+
                     time.sleep(1 / fps)
 
                 cap.release()
@@ -98,3 +152,12 @@ elif mode == "Live Camera":
             media_stream_constraints={"video": True, "audio": False},
             async_processing=True,
         )
+
+        # While the WebRTC stream is active, poll for new alert events and play them in browser.
+        if webrtc_ctx:
+            try:
+                while webrtc_ctx.state.playing:
+                    play_alert_if_new()
+                    time.sleep(0.35)
+            except Exception:
+                pass
