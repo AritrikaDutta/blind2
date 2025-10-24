@@ -1,61 +1,53 @@
 import os
 import time
-import subprocess
-from gtts import gTTS
-from pydub import AudioSegment
+from typing import Optional, Dict
+
+_last_alert_event: Dict[str, object] = {"label": None, "ts": 0.0, "seq": 0}
 
 class VoiceAlertManager:
-    def __init__(self, temp_audio_dir="voice_cache", export_wav_path="C:/temp/voice.wav",
-                 ffplay_path="C:/Users/HP/ffmpeg-7.1.1-essentials_build/ffmpeg-7.1.1-essentials_build/bin/ffplay.exe"):
-        self.last_state = None   # "Move" or "Stop"
-        self.last_time = 0       # last time a message was spoken
-        self.cooldown = 8        # repeat after 8 seconds
+    def __init__(self, temp_audio_dir: str = "voice_cache", cooldown_seconds: float = 0.25):
+        self.last_state: Optional[str] = None  # "Move" or "Stop"
+        self.last_time: float = 0.0            # last time an alert was emitted
+        self.cooldown: float = cooldown_seconds
 
-        # Allow custom temp dir & export path
         self.audio_folder = temp_audio_dir
-        self.export_wav_path = export_wav_path
         os.makedirs(self.audio_folder, exist_ok=True)
-        os.makedirs(os.path.dirname(self.export_wav_path), exist_ok=True)
 
-        # Path to ffplay executable
-        self.ffplay_path = ffplay_path
+    def _resolve_prerecorded(self, message: str) -> Optional[str]:
+        candidates = [
+            os.path.join(self.audio_folder, f"{message}.mp3"),
+            os.path.join(self.audio_folder, f"{message.lower()}.mp3"),
+            os.path.join(self.audio_folder, f"{message.title()}.mp3"),
+            os.path.join(self.audio_folder, f"{message.upper()}.mp3"),
+        ]
+        for p in candidates:
+            if os.path.exists(p):
+                return p
+        return None
 
-    def generate_audio(self, message):
-        """Generate and cache audio for the given message."""
-        filepath = os.path.join(self.audio_folder, f"{message}.mp3")
-        if not os.path.exists(filepath):
-            try:
-                tts = gTTS(text=message, lang='en')
-                tts.save(filepath)
-                print(f"[VoiceInfo] Generated new audio: {filepath}")
-            except Exception as e:
-                print(f"[VoiceError] Failed to generate audio for '{message}': {e}")
-        return filepath
+    def _emit_event(self, label: str):
+        global _last_alert_event
+        _last_alert_event = {
+            "label": label,
+            "ts": time.time(),
+            "seq": int(_last_alert_event.get("seq", 0)) + 1,
+        }
+        print(f"[VoiceEvent] Emitted alert: {_last_alert_event}")
 
-    def speak(self, message):
-        """Play the cached or newly generated audio message."""
-        mp3_path = self.generate_audio(message)
-        try:
-            audio = AudioSegment.from_mp3(mp3_path)
-            audio.export(self.export_wav_path, format="wav")
-
-            subprocess.run(
-                [self.ffplay_path, "-nodisp", "-autoexit", self.export_wav_path],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-            print(f"[VoiceDebug] Played message: {message}")
-        except Exception as e:
-            print(f"[VoiceError] Failed to play audio: {e}")
-
-    def update_and_speak(self, is_safe, timestamp):
-        """Decide whether to play 'Move' or 'Stop' based on state changes."""
+    def update_and_speak(self, is_safe: bool, timestamp: float):
         now = time.time()
         label = "Move" if is_safe else "Stop"
-        print(f"[VoiceDebug] is_safe={is_safe}, label={label}, now={timestamp:.2f}s")
+        print(f"[VoiceDebug] is_safe={is_safe}, label={label}, t={timestamp:.2f}s")
 
-        # Speak if state changes or cooldown exceeded
         if self.last_state != label or now - self.last_time > self.cooldown:
-            self.speak(label)
+            path = self._resolve_prerecorded(label)
+            if not path:
+                print(f"[VoiceWarn] Missing prerecorded audio for '{label}' in {self.audio_folder}.")
+            self._emit_event(label)
             self.last_time = now
             self.last_state = label
+
+
+def get_last_alert_event() -> Dict[str, object]:
+    """Return the latest alert event dict: {label:str|None, ts:float, seq:int}."""
+    return dict(_last_alert_event)
